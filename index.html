@@ -831,27 +831,21 @@
       
       navigator.serviceWorker.register('/sw.js')
         .then(registration => {
-          addLog('system', 'status', 'Service Worker registered successfully.');
-          
-          // Wait until SW is active and controlling the page
-          const checkController = () => {
-            if (navigator.serviceWorker.controller) {
-              swStatusText.textContent = 'Service Worker: Active';
-              swStatusIndicator.className = 'sw-status-indicator active';
-              btnDownload.disabled = false;
-              addLog('system', 'status', 'Service Worker is active and controlling this client.');
-            } else {
-              swStatusText.textContent = 'Activating Service Worker...';
-              setTimeout(checkController, 100);
-            }
-          };
-          checkController();
+          addLog('system', 'status', 'Service Worker registration request succeeded.');
         })
         .catch(error => {
           swStatusText.textContent = 'Service Worker: Failed';
           swStatusIndicator.className = 'sw-status-indicator error';
           addLog('system', 'error', `Service Worker registration failed: ${error}`);
         });
+
+      // Wait until Service Worker is active and ready
+      navigator.serviceWorker.ready.then(registration => {
+        swStatusText.textContent = 'Service Worker: Active';
+        swStatusIndicator.className = 'sw-status-indicator active';
+        btnDownload.disabled = false;
+        addLog('system', 'status', 'Service Worker is ready and active.');
+      });
 
       // Handle controllerchange (in case of SW update)
       navigator.serviceWorker.addEventListener('controllerchange', () => {
