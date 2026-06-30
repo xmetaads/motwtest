@@ -881,6 +881,22 @@
       
       addLog('ui', 'info', `Triggering synthetic download request: ${filename} (Size: ${(selectedSize/1024/1024).toFixed(2)} MB), Method: ${downloadMethod}`);
       
+      // DIAGNOSTIC CHECKS
+      if (window.location.protocol === 'file:') {
+        addLog('system', 'error', 'CRITICAL: You are running this page via file://. Service Workers are strictly blocked on file:// protocols. Please run a local web server (e.g. npx serve).');
+        return;
+      }
+      
+      if (!navigator.serviceWorker) {
+        addLog('system', 'error', 'CRITICAL: navigator.serviceWorker is not supported in this browser context. Ensure you are visiting via HTTPS or localhost.');
+        return;
+      }
+
+      if (!navigator.serviceWorker.controller) {
+        addLog('system', 'error', 'CRITICAL: Service Worker is not controlling this page yet. Please reload the page (Ctrl + F5 or Cmd + Shift + R) to activate interception.');
+        return;
+      }
+      
       // Start UI timing
       downloadStartTime = Date.now();
       bytesDownloadedTracked = 0;
@@ -923,6 +939,9 @@
       addLog('system', 'info', '[RAM] Starting HTTP fetch call to load bytes...');
       try {
         const response = await fetch(downloadUrl);
+        addLog('system', 'info', `[RAM] HTTP Response Status: ${response.status} (${response.statusText})`);
+        addLog('system', 'info', `[RAM] Content-Type: ${response.headers.get('content-type')}`);
+        
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -938,6 +957,7 @@
           }
         }
 
+        addLog('system', 'info', '[RAM] Reading stream reader...');
         const reader = stream.getReader();
         const chunks = [];
         let receivedLength = 0;
