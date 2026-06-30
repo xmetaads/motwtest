@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Service Worker Synthetic Streamed Download Testbed</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: hsl(224, 71%, 4%);
+      --bg-surface: hsla(224, 71%, 8%, 0.7);
+      --bg-card: hsla(224, 71%, 12%, 0.55);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-color-glow: rgba(99, 102, 241, 0.35);
+      
+      --color-primary: hsl(263, 90%, 65%);
+      --color-secondary: hsl(190, 95%, 55%);
+      --color-accent: hsl(263, 90%, 60%);
+      --color-success: hsl(142, 76%, 45%);
+      --color-warning: hsl(38, 92%, 50%);
+      --color-danger: hsl(350, 89%, 60%);
+      
+      --text-main: hsl(210, 40%, 98%);
+      --text-muted: hsl(215, 20%, 65%);
+      --text-dim: hsl(215, 15%, 45%);
+      
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      
+      --glow-shadow: 0 0 25px rgba(99, 102, 241, 0.25);
+      --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      background-image: 
+        radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0px, transparent 50%),
+        radial-gradient(at 50% 0%, hsla(263, 85%, 20%, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, hsla(190, 85%, 20%, 0.1) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    header {
+      padding: 2rem 2rem 1rem 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+      border-radius: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--glow-shadow);
+      font-weight: 800;
+      color: var(--bg-base);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, var(--text-main), var(--text-muted));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .sw-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      padding: 0.5rem 1rem;
+      border-radius: 2rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--glass-shadow);
+      transition: var(--transition);
+    }
+
+    .sw-status-indicator {
+      width: 0.625rem;
+      height: 0.625rem;
+      border-radius: 50%;
+      background: var(--text-dim);
+      display: inline-block;
+    }
+
+    .sw-status-indicator.active {
+      background: var(--color-success);
+      box-shadow: 0 0 10px var(--color-success);
+      animation: pulse 2s infinite;
+    }
+
+    .sw-status-indicator.registering {
+      background: var(--color-warning);
+      box-shadow: 0 0 10px var(--color-warning);
+      animation: pulse 1.5s infinite;
+    }
+
+    .sw-status-indicator.error {
+      background: var(--color-danger);
+      box-shadow: 0 0 10px var(--color-danger);
+    }
+
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1rem 2rem 3rem 2rem;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 968px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 1.25rem;
+      padding: 2rem;
+      backdrop-filter: blur(20px);
+      box-shadow: var(--glass-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.5s;
+    }
+
+    .panel::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--color-primary), var(--color-secondary), transparent);
+      opacity: 0.5;
+    }
+
+    .panel:hover {
+      border-color: var(--border-color-glow);
+    }
+
+    .panel-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.75rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    input[type="text"], select {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      font-family: inherit;
+      font-size: 0.95rem;
+      outline: none;
+      transition: var(--transition);
+      width: 100%;
+    }
+
+    input[type="text"]:focus, select:focus {
+      border-color: var(--color-secondary);
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.15);
+    }
+
+    .preset-container {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.5rem;
+    }
+
+    .preset-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 0.5rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: var(--transition);
+    }
+
+    .preset-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+    }
+
+    .preset-btn.active {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(6, 182, 212, 0.2));
+      border-color: var(--color-secondary);
+      color: var(--text-main);
+    }
+
+    .toggle-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      transition: var(--transition);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-container:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 2.75rem;
+      height: 1.5rem;
+      background: var(--text-dim);
+      border-radius: 1rem;
+      transition: var(--transition);
+    }
+
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 1.25rem;
+      height: 1.25rem;
+      background: var(--bg-base);
+      border-radius: 50%;
+      transition: var(--transition);
+    }
+
+    .toggle-container.active .toggle-switch {
+      background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    }
+
+    .toggle-container.active .toggle-switch::after {
+      left: calc(100% - 1.25rem - 2px);
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 480px) {
+      .options-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .btn-download {
+      background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+      border: none;
+      color: var(--text-main);
+      padding: 1rem;
+      border-radius: 0.75rem;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: var(--glow-shadow);
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-download::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+      transition: 0.5s;
+    }
+
+    .btn-download:hover::before {
+      left: 100%;
+    }
+
+    .btn-download:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 30px rgba(99, 102, 241, 0.45);
+      filter: brightness(1.1);
+    }
+
+    .btn-download:active {
+      transform: translateY(0);
+    }
+
+    .btn-download:disabled {
+      background: var(--text-dim);
+      box-shadow: none;
+      cursor: not-allowed;
+      transform: none;
+      opacity: 0.6;
+    }
+
+    /* Logs Panel styling */
+    .log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+
+    .btn-clear-logs {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 0.25rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-clear-logs:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      border-color: var(--text-muted);
+    }
+
+    .log-container {
+      flex: 1;
+      min-height: 350px;
+      max-height: 480px;
+      background: hsl(224, 71%, 6%);
+      border: 1px solid var(--border-color);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      scroll-behavior: smooth;
+    }
+
+    .log-entry {
+      border-left: 2px solid var(--text-dim);
+      padding-left: 0.5rem;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    .log-entry .timestamp {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      margin-right: 0.5rem;
+    }
+
+    .log-entry.info {
+      border-color: var(--color-secondary);
+    }
+    .log-entry.info .badge {
+      color: var(--color-secondary);
+    }
+
+    .log-entry.progress {
+      border-color: var(--color-primary);
+    }
+    .log-entry.progress .badge {
+      color: var(--color-primary);
+    }
+
+    .log-entry.status {
+      border-color: var(--color-success);
+    }
+    .log-entry.status .badge {
+      color: var(--color-success);
+    }
+
+    .log-entry.warn {
+      border-color: var(--color-warning);
+    }
+    .log-entry.warn .badge {
+      color: var(--color-warning);
+    }
+
+    .log-entry.error {
+      border-color: var(--color-danger);
+    }
+    .log-entry.error .badge {
+      color: var(--color-danger);
+    }
+
+    .badge {
+      font-weight: 700;
+      margin-right: 0.5rem;
+    }
+
+    /* Stats Board */
+    .stats-board {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-val {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--color-secondary);
+      font-family: var(--font-mono);
+      margin-top: 0.25rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Progress bar */
+    .download-progress-bar-container {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-card);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+      display: none;
+    }
+
+    .download-progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+      border-radius: 3px;
+      transition: width 0.1s ease-out;
+    }
+
+    @keyframes pulse {
+      0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+      }
+      70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+      }
+      100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+      }
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-dim);
+      font-size: 0.8125rem;
+      border-top: 1px solid var(--border-color);
+      width: 100%;
+      margin-top: auto;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-container">
+      <div class="logo-icon">SW</div>
+      <div>
+        <h1>Streamed Download Engine</h1>
+        <p style="font-size: 0.75rem; color: var(--text-muted);">Service Worker Synthetic Gzip Streamer</p>
+      </div>
+    </div>
+    <div class="sw-badge" id="sw-status-badge">
+      <span class="sw-status-indicator" id="sw-status-indicator"></span>
+      <span id="sw-status-text">Checking Service Worker...</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left panel: Controls -->
+    <section class="panel">
+      <h2 class="panel-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-secondary);"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        Download Configuration
+      </h2>
+
+      <div class="form-group">
+        <label for="filename">Filename</label>
+        <input type="text" id="filename" value="synthetic-installer.exe" placeholder="e.g., installer.exe">
+      </div>
+
+      <div class="form-group">
+        <label>Synthetic File Size</label>
+        <div class="preset-container">
+          <button type="button" class="preset-btn" data-bytes="1048576">1 MB</button>
+          <button type="button" class="preset-btn active" data-bytes="10485760">10 MB</button>
+          <button type="button" class="preset-btn" data-bytes="52428800">50 MB</button>
+          <button type="button" class="preset-btn" data-bytes="104857600">100 MB</button>
+        </div>
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+          <input type="text" id="custom-size-val" value="10" style="flex: 1;" placeholder="Custom size">
+          <select id="custom-size-unit" style="width: 100px;">
+            <option value="MB">MB</option>
+            <option value="KB">KB</option>
+            <option value="GB">GB</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="options-grid">
+        <div class="form-group">
+          <label for="generator-type">Data Entropy Type</label>
+          <select id="generator-type">
+            <option value="compressible" selected>Compressible Pattern (Zeroes/Text)</option>
+            <option value="random">High Entropy (Random Bytes)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Compression</label>
+          <div class="toggle-container active" id="toggle-gzip">
+            <span>Gzip Stream (native JS)</span>
+            <div class="toggle-switch"></div>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" class="btn-download" id="btn-download" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Generate & Start Download
+      </button>
+
+      <div class="download-progress-bar-container" id="progress-container">
+        <div class="download-progress-bar" id="progress-bar"></div>
+      </div>
+    </section>
+
+    <!-- Right panel: Logger / Event Monitor -->
+    <section class="panel">
+      <div class="log-header">
+        <h2 class="panel-title" style="border: none; padding-bottom: 0;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-primary);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+          Real-time Event Stream
+        </h2>
+        <button type="button" class="btn-clear-logs" id="btn-clear-logs">Clear Logs</button>
+      </div>
+
+      <div class="log-container" id="log-container">
+        <!-- Logs are dynamically appended here -->
+      </div>
+
+      <div class="stats-board">
+        <div class="stat-card">
+          <div class="stat-label">Elapsed Time</div>
+          <div class="stat-val" id="stat-time">0.0s</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Stream Speed</div>
+          <div class="stat-val" id="stat-speed">-</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Service Worker Streamed Download Testbed &bull; Built with Native JavaScript &bull; Supported by Modern Web APIs</p>
+  </footer>
+
+  <script>
+    // Configuration elements
+    const filenameInput = document.getElementById('filename');
+    const presetButtons = document.querySelectorAll('.preset-btn');
+    const customSizeVal = document.getElementById('custom-size-val');
+    const customSizeUnit = document.getElementById('custom-size-unit');
+    const generatorTypeSelect = document.getElementById('generator-type');
+    const toggleGzip = document.getElementById('toggle-gzip');
+    const btnDownload = document.getElementById('btn-download');
+    const progressBar = document.getElementById('progress-bar');
+    const progressContainer = document.getElementById('progress-container');
+    const logContainer = document.getElementById('log-container');
+    const btnClearLogs = document.getElementById('btn-clear-logs');
+    const swStatusIndicator = document.getElementById('sw-status-indicator');
+    const swStatusText = document.getElementById('sw-status-text');
+    const statTime = document.getElementById('stat-time');
+    const statSpeed = document.getElementById('stat-speed');
+
+    // State variables
+    let selectedSize = 10485760; // 10MB default
+    let isGzipEnabled = true;
+    let downloadStartTime = null;
+    let downloadTimer = null;
+    let bytesDownloadedTracked = 0;
+
+    // Initialize UI log function
+    function addLog(source, level, message) {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+      
+      const logEntry = document.createElement('div');
+      logEntry.className = `log-entry ${level}`;
+      
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'timestamp';
+      timeSpan.textContent = `[${timeStr}]`;
+      
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = 'badge';
+      badgeSpan.textContent = source.toUpperCase();
+      
+      const textSpan = document.createElement('span');
+      textSpan.textContent = message;
+      
+      logEntry.appendChild(timeSpan);
+      logEntry.appendChild(badgeSpan);
+      logEntry.appendChild(textSpan);
+      
+      logContainer.appendChild(logEntry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    addLog('system', 'info', 'Console initialized. Preparing to register Service Worker.');
+
+    // Toggle Gzip Compression Option
+    toggleGzip.addEventListener('click', () => {
+      isGzipEnabled = !isGzipEnabled;
+      toggleGzip.classList.toggle('active', isGzipEnabled);
+      addLog('ui', 'info', `Gzip compression ${isGzipEnabled ? 'enabled' : 'disabled'}.`);
+      
+      // Smart adjust filename extension based on zip toggle
+      let fname = filenameInput.value;
+      if (isGzipEnabled) {
+        if (fname.endsWith('.exe') && !fname.endsWith('.exe.gz')) {
+          filenameInput.value = fname + '.gz';
+        } else if (!fname.endsWith('.gz')) {
+          filenameInput.value = fname + '.exe.gz';
+        }
+      } else {
+        if (fname.endsWith('.exe.gz')) {
+          filenameInput.value = fname.slice(0, -3);
+        } else if (fname.endsWith('.gz')) {
+          filenameInput.value = fname.slice(0, -3);
+        }
+      }
+    });
+
+    // Preset button handlers
+    presetButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        presetButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedSize = parseInt(btn.dataset.bytes, 10);
+        
+        // Update custom text input to reflect bytes in MB
+        const mb = (selectedSize / (1024 * 1024));
+        customSizeVal.value = Number.isInteger(mb) ? mb : mb.toFixed(2);
+        customSizeUnit.value = 'MB';
+        
+        addLog('ui', 'info', `Set size to preset: ${(selectedSize / (1024 * 1024)).toFixed(0)} MB`);
+      });
+    });
+
+    // Custom size listener
+    const updateCustomSize = () => {
+      const val = parseFloat(customSizeVal.value);
+      if (isNaN(val) || val <= 0) return;
+      
+      presetButtons.forEach(b => b.classList.remove('active'));
+      const unit = customSizeUnit.value;
+      let multiplier = 1024 * 1024; // Default MB
+      if (unit === 'KB') multiplier = 1024;
+      if (unit === 'GB') multiplier = 1024 * 1024 * 1024;
+      
+      selectedSize = Math.floor(val * multiplier);
+      
+      // See if it matches a preset
+      presetButtons.forEach(btn => {
+        if (parseInt(btn.dataset.bytes, 10) === selectedSize) {
+          btn.classList.add('active');
+        }
+      });
+    };
+    customSizeVal.addEventListener('input', updateCustomSize);
+    customSizeUnit.addEventListener('change', updateCustomSize);
+
+    // Clear logs
+    btnClearLogs.addEventListener('click', () => {
+      logContainer.innerHTML = '';
+      addLog('system', 'info', 'Logs cleared.');
+    });
+
+    // Service Worker Communication
+    let logChannel;
+    try {
+      logChannel = new BroadcastChannel('sw-download-logs');
+      logChannel.onmessage = (event) => {
+        const { source, level, message, data } = event.data;
+        
+        // Output SW logs to our UI panel
+        addLog(source, level, message);
+
+        if (level === 'progress') {
+          const { percent, bytesWritten } = data;
+          bytesDownloadedTracked = bytesWritten;
+          progressContainer.style.display = 'block';
+          progressBar.style.width = `${percent}%`;
+
+          // Live stats calculation
+          if (downloadStartTime) {
+            const elapsed = (Date.now() - downloadStartTime) / 1000;
+            statTime.textContent = `${elapsed.toFixed(1)}s`;
+            const speedMBs = (bytesWritten / (1024 * 1024)) / elapsed;
+            statSpeed.textContent = `${speedMBs.toFixed(2)} MB/s`;
+          }
+        }
+
+        if (message.includes('Stream execution completed')) {
+          finishDownloadStats();
+        }
+      };
+    } catch (e) {
+      addLog('system', 'error', `BroadcastChannel failed: ${e.message}`);
+    }
+
+    function finishDownloadStats() {
+      if (downloadTimer) {
+        clearInterval(downloadTimer);
+        downloadTimer = null;
+      }
+      const elapsed = ((Date.now() - downloadStartTime) / 1000).toFixed(2);
+      statTime.textContent = `${elapsed}s`;
+      
+      const totalMB = selectedSize / (1024 * 1024);
+      const speedMBs = totalMB / parseFloat(elapsed);
+      statSpeed.textContent = `${speedMBs.toFixed(2)} MB/s`;
+      
+      addLog('system', 'status', `Download process finished successfully. Total elapsed: ${elapsed} seconds.`);
+      
+      setTimeout(() => {
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+      }, 3000);
+    }
+
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      swStatusText.textContent = 'Registering Service Worker...';
+      swStatusIndicator.className = 'sw-status-indicator registering';
+      
+      navigator.serviceWorker.register('/sw.js')
+        .then(registration => {
+          addLog('system', 'status', 'Service Worker registered successfully.');
+          
+          // Wait until SW is active and controlling the page
+          const checkController = () => {
+            if (navigator.serviceWorker.controller) {
+              swStatusText.textContent = 'Service Worker: Active';
+              swStatusIndicator.className = 'sw-status-indicator active';
+              btnDownload.disabled = false;
+              addLog('system', 'status', 'Service Worker is active and controlling this client.');
+            } else {
+              swStatusText.textContent = 'Activating Service Worker...';
+              setTimeout(checkController, 100);
+            }
+          };
+          checkController();
+        })
+        .catch(error => {
+          swStatusText.textContent = 'Service Worker: Failed';
+          swStatusIndicator.className = 'sw-status-indicator error';
+          addLog('system', 'error', `Service Worker registration failed: ${error}`);
+        });
+
+      // Handle controllerchange (in case of SW update)
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        addLog('system', 'info', 'New Service Worker controlling page. Reloading client in 1s...');
+        setTimeout(() => window.location.reload(), 1000);
+      });
+    } else {
+      swStatusText.textContent = 'Service Workers Not Supported';
+      swStatusIndicator.className = 'sw-status-indicator error';
+      addLog('system', 'error', 'Service Workers are not supported in this browser. You cannot perform this test.');
+    }
+
+    // Trigger Download Click
+    btnDownload.addEventListener('click', () => {
+      const filename = filenameInput.value || 'download.exe';
+      const generator = generatorTypeSelect.value;
+      
+      addLog('ui', 'info', `Triggering synthetic download request: ${filename} (Size: ${(selectedSize/1024/1024).toFixed(2)} MB)`);
+      
+      // Start UI timing
+      downloadStartTime = Date.now();
+      bytesDownloadedTracked = 0;
+      statTime.textContent = '0.0s';
+      statSpeed.textContent = 'Starting...';
+      progressContainer.style.display = 'block';
+      progressBar.style.width = '0%';
+      
+      if (downloadTimer) clearInterval(downloadTimer);
+      downloadTimer = setInterval(() => {
+        const elapsed = (Date.now() - downloadStartTime) / 1000;
+        statTime.textContent = `${elapsed.toFixed(1)}s`;
+      }, 100);
+
+      // Programmatically trigger download by navigating to the sw-intercepted endpoint
+      const downloadUrl = `/download-synthetic?filename=${encodeURIComponent(filename)}&size=${selectedSize}&gzip=${isGzipEnabled}&generator=${generator}`;
+      
+      addLog('ui', 'info', `Navigating to intercepted route: ${downloadUrl}`);
+      
+      // Use an iframe or anchor to avoid page navigation reload side-effects
+      const downloadIframe = document.createElement('iframe');
+      downloadIframe.style.display = 'none';
+      downloadIframe.src = downloadUrl;
+      document.body.appendChild(downloadIframe);
+      
+      // Cleanup the iframe after some time
+      setTimeout(() => {
+        document.body.removeChild(downloadIframe);
+      }, 60000);
+    });
+  </script>
+</body>
+</html>
