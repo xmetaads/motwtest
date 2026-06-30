@@ -844,7 +844,7 @@
       swStatusText.textContent = 'Registering Service Worker...';
       swStatusIndicator.className = 'sw-status-indicator registering';
       
-      navigator.serviceWorker.register('/sw.js')
+      navigator.serviceWorker.register('./sw.js')
         .then(registration => {
           addLog('system', 'status', 'Service Worker registration request succeeded.');
         })
