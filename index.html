@@ -590,6 +590,14 @@
         </div>
       </div>
 
+      <div class="form-group">
+        <label for="download-method">Download Method</label>
+        <select id="download-method">
+          <option value="stream" selected>Direct Stream (Iframe - Normal MOTW)</option>
+          <option value="blob">Blob URL (RAM Fetch & Decompress - Bypass MOTW)</option>
+        </select>
+      </div>
+
       <div class="options-grid">
         <div class="form-group">
           <label for="generator-type">Data Entropy Type</label>
@@ -673,6 +681,7 @@
     let downloadStartTime = null;
     let downloadTimer = null;
     let bytesDownloadedTracked = 0;
+    let isBlobDownloadActive = false;
 
     // Initialize UI log function
     function addLog(source, level, message) {
@@ -784,20 +793,26 @@
         if (level === 'progress') {
           const { percent, bytesWritten } = data;
           bytesDownloadedTracked = bytesWritten;
-          progressContainer.style.display = 'block';
-          progressBar.style.width = `${percent}%`;
+          
+          // Only update UI progress bar if not in Blob URL mode (which tracks its own decompressed progress)
+          if (!isBlobDownloadActive) {
+            progressContainer.style.display = 'block';
+            progressBar.style.width = `${percent}%`;
 
-          // Live stats calculation
-          if (downloadStartTime) {
-            const elapsed = (Date.now() - downloadStartTime) / 1000;
-            statTime.textContent = `${elapsed.toFixed(1)}s`;
-            const speedMBs = (bytesWritten / (1024 * 1024)) / elapsed;
-            statSpeed.textContent = `${speedMBs.toFixed(2)} MB/s`;
+            // Live stats calculation
+            if (downloadStartTime) {
+              const elapsed = (Date.now() - downloadStartTime) / 1000;
+              statTime.textContent = `${elapsed.toFixed(1)}s`;
+              const speedMBs = (bytesWritten / (1024 * 1024)) / elapsed;
+              statSpeed.textContent = `${speedMBs.toFixed(2)} MB/s`;
+            }
           }
         }
 
         if (message.includes('Stream execution completed')) {
-          finishDownloadStats();
+          if (!isBlobDownloadActive) {
+            finishDownloadStats();
+          }
         }
       };
     } catch (e) {
@@ -862,8 +877,9 @@
     btnDownload.addEventListener('click', () => {
       const filename = filenameInput.value || 'download.exe';
       const generator = generatorTypeSelect.value;
+      const downloadMethod = document.getElementById('download-method').value;
       
-      addLog('ui', 'info', `Triggering synthetic download request: ${filename} (Size: ${(selectedSize/1024/1024).toFixed(2)} MB)`);
+      addLog('ui', 'info', `Triggering synthetic download request: ${filename} (Size: ${(selectedSize/1024/1024).toFixed(2)} MB), Method: ${downloadMethod}`);
       
       // Start UI timing
       downloadStartTime = Date.now();
@@ -882,19 +898,115 @@
       // Programmatically trigger download by navigating to the sw-intercepted endpoint
       const downloadUrl = `/download-synthetic?filename=${encodeURIComponent(filename)}&size=${selectedSize}&gzip=${isGzipEnabled}&generator=${generator}`;
       
-      addLog('ui', 'info', `Navigating to intercepted route: ${downloadUrl}`);
-      
-      // Use an iframe or anchor to avoid page navigation reload side-effects
-      const downloadIframe = document.createElement('iframe');
-      downloadIframe.style.display = 'none';
-      downloadIframe.src = downloadUrl;
-      document.body.appendChild(downloadIframe);
-      
-      // Cleanup the iframe after some time
-      setTimeout(() => {
-        document.body.removeChild(downloadIframe);
-      }, 60000);
+      if (downloadMethod === 'stream') {
+        addLog('ui', 'info', `Navigating to intercepted route: ${downloadUrl}`);
+        
+        // Use an iframe or anchor to avoid page navigation reload side-effects
+        const downloadIframe = document.createElement('iframe');
+        downloadIframe.style.display = 'none';
+        downloadIframe.src = downloadUrl;
+        document.body.appendChild(downloadIframe);
+        
+        // Cleanup the iframe after some time
+        setTimeout(() => {
+          document.body.removeChild(downloadIframe);
+        }, 60000);
+      } else {
+        // Blob URL download
+        runBlobDownload(downloadUrl, filename);
+      }
     });
+
+    async function runBlobDownload(downloadUrl, filename) {
+      isBlobDownloadActive = true;
+      btnDownload.disabled = true;
+      addLog('system', 'info', '[RAM] Starting HTTP fetch call to load bytes...');
+      try {
+        const response = await fetch(downloadUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        let stream = response.body;
+        if (isGzipEnabled) {
+          addLog('system', 'info', '[RAM] Gzip decompression is enabled. Injected DecompressionStream into pipeline.');
+          if (typeof DecompressionStream !== 'undefined') {
+            stream = stream.pipeThrough(new DecompressionStream('gzip'));
+          } else {
+            addLog('system', 'error', '[RAM] DecompressionStream is not supported in this browser!');
+            throw new Error('DecompressionStream not supported');
+          }
+        }
+
+        const reader = stream.getReader();
+        const chunks = [];
+        let receivedLength = 0;
+        let lastLoggedProgress = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          chunks.push(value);
+          receivedLength += value.length;
+
+          // Update progress UI
+          const percent = Math.min(100, (receivedLength / selectedSize * 100).toFixed(1));
+          progressBar.style.width = `${percent}%`;
+
+          // Live stats calculation
+          const elapsed = (Date.now() - downloadStartTime) / 1000;
+          statTime.textContent = `${elapsed.toFixed(1)}s`;
+          const speedMBs = (receivedLength / (1024 * 1024)) / (elapsed || 0.001);
+          statSpeed.textContent = `${speedMBs.toFixed(2)} MB/s`;
+
+          // Log progress every ~1MB
+          if (receivedLength - lastLoggedProgress >= 1024 * 1024 || receivedLength === selectedSize) {
+            addLog('system', 'progress', `[RAM] Downloaded & Decompressed ${(receivedLength / 1024 / 1024).toFixed(2)} MB of ${(selectedSize / 1024 / 1024).toFixed(2)} MB (${percent}%)`);
+            lastLoggedProgress = receivedLength;
+          }
+        }
+
+        addLog('system', 'status', `[RAM] Stream fully read into memory. Total decompressed size: ${(receivedLength / 1024 / 1024).toFixed(2)} MB.`);
+        addLog('system', 'info', '[RAM] Creating Binary Blob from bytes...');
+        const blob = new Blob(chunks, { type: 'application/octet-stream' });
+        
+        addLog('system', 'info', '[RAM] Exposing Blob data via URL.createObjectURL()...');
+        const blobUrl = URL.createObjectURL(blob);
+        addLog('system', 'status', `[RAM] Allocated local URI: ${blobUrl}`);
+
+        addLog('system', 'info', '[RAM] Simulating click on dynamic <a> link to save file to system...');
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        // Finish stats tracking
+        finishDownloadStats();
+
+        // Cleanup
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+          addLog('system', 'info', `[RAM] Revoked Blob URL: ${blobUrl}`);
+        }, 10000);
+
+      } catch (error) {
+        addLog('system', 'error', `[RAM] In-memory download failed: ${error.message}`);
+        if (downloadTimer) {
+          clearInterval(downloadTimer);
+          downloadTimer = null;
+        }
+        statSpeed.textContent = 'Error';
+        progressContainer.style.display = 'none';
+      } finally {
+        isBlobDownloadActive = false;
+        btnDownload.disabled = false;
+      }
+    }
   </script>
 </body>
 </html>
